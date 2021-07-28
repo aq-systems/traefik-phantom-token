@@ -1,3 +1,3 @@
-module github.com/team-carepay/traefik-jwt-plugin
+module github.com/JacobPlaster/traefik-phantom-opa
 
-go 1.16
+go 1.17

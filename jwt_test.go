@@ -1,4 +1,4 @@
-package traefik_jwt_plugin_test
+package traefik_phantom_opa_test
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	traefik_jwt_plugin "github.com/team-carepay/traefik-jwt-plugin"
+	traefik_jwt_plugin "github.com/JacobPlaster/traefik-phantom-opa"
 )
 
 func TestServeHTTPOK(t *testing.T) {

@@ -1,4 +1,4 @@
-package traefik_jwt_plugin
+package traefik_phantom_opa
 
 import (
 	"bytes"
@@ -490,9 +490,15 @@ func (jwtPlugin *JwtPlugin) CheckOpa(request *http.Request, token *JWT) error {
 	if err != nil {
 		return err
 	}
+	if len(result.Result) == 0 {
+		return fmt.Errorf("OPA result invalid")
+	}
+	fieldResult, ok := result.Result[jwtPlugin.opaAllowField]
+	if !ok {
+		return fmt.Errorf("OPA result missing: %v", jwtPlugin.opaAllowField)
+	}
 	var allow bool
-
-	if err = json.Unmarshal(result.Result[jwtPlugin.opaAllowField], &allow); err != nil {
+	if err = json.Unmarshal(fieldResult, &allow); err != nil {
 		return err
 	}
 	if !allow {
@@ -662,6 +668,10 @@ func verifyECDSA(key interface{}, _ crypto.Hash, digest []byte, signature []byte
 // JWKThumbprint creates a JWK thumbprint out of pub
 // as specified in https://tools.ietf.org/html/rfc7638.
 func JWKThumbprint(jwk string) (string, error) {
-	b := sha256.Sum256([]byte(jwk))
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+	bs := sha256.Sum256([]byte(jwk))
+	bytesArr := []byte{}
+	for i := range bs {
+		bytesArr[i] = bs[i]
+	}
+	return base64.RawURLEncoding.EncodeToString(bytesArr), nil
 }
