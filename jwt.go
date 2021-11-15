@@ -39,27 +39,39 @@ type Config struct {
 	Aud           string
 	OpaHeaders    map[string]string
 	JwtHeaders    map[string]string
+
+	IntrospectUrl string
+	ClientId      string
+	ClientSecret  string
+	ForwardAuthHeader  string
 }
 
 // CreateConfig creates a new OPA Config
 func CreateConfig() *Config {
+	fmt.Println("********* ServeHTTP")
 	return &Config{}
 }
 
 // JwtPlugin contains the runtime config
 type JwtPlugin struct {
-	next          http.Handler
-	opaUrl        string
-	opaAllowField string
-	payloadFields []string
-	required      bool
-	jwkEndpoints  []*url.URL
-	keys          map[string]interface{}
-	alg           string
-	iss           string
-	aud           string
-	opaHeaders    map[string]string
-	jwtHeaders    map[string]string
+	next               http.Handler
+	opaUrl             string
+	opaAllowField      string
+	payloadFields      []string
+	required           bool
+
+	jwkEndpoints       []*url.URL
+	introspectEndpoint *url.URL
+	clientId           string
+	clientSecret       string
+	forwardAuthHeader  string
+
+	keys               map[string]interface{}
+	alg                string
+	iss                string
+	aud                string
+	opaHeaders         map[string]string
+	jwtHeaders         map[string]string
 }
 
 // LogEvent contains a single log entry
@@ -151,6 +163,11 @@ type Response struct {
 
 // New creates a new plugin
 func New(_ context.Context, next http.Handler, config *Config, _ string) (http.Handler, error) {
+	fmt.Println("********* New")
+	introspectUrl, err := url.Parse(config.IntrospectUrl)
+	if err != nil {
+		return nil, err
+	}
 	jwtPlugin := &JwtPlugin{
 		next:          next,
 		opaUrl:        config.OpaUrl,
@@ -163,6 +180,10 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		keys:          make(map[string]interface{}),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
+		introspectEndpoint: introspectUrl,
+		clientSecret: config.ClientSecret,
+		clientId: config.ClientId,
+		forwardAuthHeader: config.ForwardAuthHeader,
 	}
 	if err := jwtPlugin.ParseKeys(config.Keys); err != nil {
 		return nil, err
@@ -304,70 +325,117 @@ func (jwtPlugin *JwtPlugin) FetchKeys() {
 	}
 }
 
-func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, request *http.Request) {
-	if err := jwtPlugin.CheckToken(request); err != nil {
+func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Request) {
+	fmt.Println("********* ServeHTTP")
+	client := &http.Client{}
+	// Forward to introspect URL
+
+	// take token from initial request
+	token := origReq.Header.Get("Authorization")
+	token = strings.TrimSpace(token)
+	token = strings.Replace(token, "Bearer ", "", 1)
+
+	// Body x-www-from-urlencoded
+	data := url.Values{}
+	data.Set("token", token)
+	data.Set("client_id", jwtPlugin.clientId)
+	data.Set("client_secret", jwtPlugin.clientSecret)
+	data.Set("token_type_hint", "access_token")
+
+	introspectReq, err := http.NewRequest("POST", jwtPlugin.introspectEndpoint.String(), strings.NewReader(data.Encode()))
+	// headers
+	introspectReq.Header.Set("accept", "application/jwt")
+	introspectReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	introspectResp, err := client.Do(introspectReq)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer introspectResp.Body.Close()
+	fmt.Println(introspectResp.StatusCode)
+
+	// reject if satus code is not 200
+	if introspectResp.StatusCode != http.StatusOK {
+		fmt.Println(err)
+		http.Error(rw, "FORBIDDEN", http.StatusUnauthorized)
+		return
+	}
+
+	rawToken, err := io.ReadAll(introspectResp.Body)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Println(string(rawToken))
+	fmt.Println(jwtPlugin.keys)
+
+	err, jwtPayload := jwtPlugin.CheckToken(string(rawToken));
+	if err != nil {
+		fmt.Println(err)
 		http.Error(rw, err.Error(), http.StatusForbidden)
 		return
 	}
-	jwtPlugin.next.ServeHTTP(rw, request)
+	if jwtPlugin.opaUrl != "" {
+		if err := jwtPlugin.CheckOpa(origReq, jwtPayload); err != nil {
+			fmt.Println(err)
+			http.Error(rw, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+
+	// remove Authorization header from original request
+	origReq.Header.Del("Authorization")
+
+	// add X-Forward-Auth: b64({JSON}) header
+	stringClaims, err := json.Marshal(jwtPayload.Payload)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	str := base64.StdEncoding.EncodeToString(stringClaims)
+	origReq.Header.Set(jwtPlugin.forwardAuthHeader, str)
+
+	jwtPlugin.next.ServeHTTP(rw, origReq)
 }
 
-func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
-	jwtToken, err := jwtPlugin.ExtractToken(request)
+func (jwtPlugin *JwtPlugin) CheckToken(rawAuthHeader string) (error, *JWT) {
+	jwtToken, err := jwtPlugin.ExtractToken(rawAuthHeader)
 	if err != nil {
-		return err
+		return err, nil
 	}
 	if jwtToken != nil {
 		// only verify jwt tokens if keys are configured
 		if len(jwtPlugin.keys) > 0 || len(jwtPlugin.jwkEndpoints) > 0 {
 			if err = jwtPlugin.VerifyToken(jwtToken); err != nil {
-				return err
+				return err, nil
 			}
 		}
 		for _, fieldName := range jwtPlugin.payloadFields {
 			if _, ok := jwtToken.Payload[fieldName]; !ok {
 				if jwtPlugin.required {
-					return fmt.Errorf("payload missing required field %s", fieldName)
+					return fmt.Errorf("payload missing required field %s", fieldName), nil
 				} else {
 					sub := fmt.Sprint(jwtToken.Payload["sub"])
-					network := jwtPlugin.remoteAddr(request)
 					jsonLogEvent, _ := json.Marshal(&LogEvent{
 						Level:   "warning",
 						Msg:     fmt.Sprintf("Missing JWT field %s", fieldName),
 						Time:    time.Now(),
 						Sub:     sub,
-						Network: network,
-						URL:     request.URL.String(),
 					})
 					fmt.Println(string(jsonLogEvent))
 				}
 			}
 		}
-		for k, v := range jwtPlugin.jwtHeaders {
-			value, ok := jwtToken.Payload[v]
-			if ok {
-				request.Header.Add(k, value.(string))
-			}
-		}
 	}
-	if jwtPlugin.opaUrl != "" {
-		if err := jwtPlugin.CheckOpa(request, jwtToken); err != nil {
-			return err
-		}
-	}
-	return nil
+	return nil, jwtToken
 }
 
-func (jwtPlugin *JwtPlugin) ExtractToken(request *http.Request) (*JWT, error) {
-	authHeader, ok := request.Header["Authorization"]
-	if !ok {
-		return nil, nil
-	}
-	auth := authHeader[0]
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return nil, nil
-	}
-	parts := strings.Split(auth[7:], ".")
+func (jwtPlugin *JwtPlugin) ExtractToken(rawAuthHeader string) (*JWT, error) {
+	parts := strings.Split(rawAuthHeader, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid token format")
 	}
@@ -384,7 +452,7 @@ func (jwtPlugin *JwtPlugin) ExtractToken(request *http.Request) (*JWT, error) {
 		return nil, err
 	}
 	jwtToken := JWT{
-		Plaintext: []byte(auth[7 : len(parts[0])+len(parts[1])+8]),
+		Plaintext: []byte(rawAuthHeader[0 : len(parts[0])+len(parts[1])+1]),
 		Signature: signature,
 	}
 	err = json.Unmarshal(header, &jwtToken.Header)
@@ -671,7 +739,7 @@ func JWKThumbprint(jwk string) (string, error) {
 	bs := sha256.Sum256([]byte(jwk))
 	bytesArr := []byte{}
 	for i := range bs {
-		bytesArr[i] = bs[i]
+		bytesArr = append(bytesArr, bs[i])
 	}
 	return base64.RawURLEncoding.EncodeToString(bytesArr), nil
 }
