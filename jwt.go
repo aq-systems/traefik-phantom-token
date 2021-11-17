@@ -48,7 +48,7 @@ type Config struct {
 
 // CreateConfig creates a new OPA Config
 func CreateConfig() *Config {
-	fmt.Println("********* ServeHTTP")
+	fmt.Println("********* CreateConfig")
 	return &Config{}
 }
 
@@ -347,6 +347,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	introspectReq.Header.Set("accept", "application/jwt")
 	introspectReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
+	fmt.Println("--- Query introspect URL", introspectReq.URL)
 	introspectResp, err := client.Do(introspectReq)
 	if err != nil {
 		fmt.Println(err)
@@ -355,6 +356,8 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	}
 	defer introspectResp.Body.Close()
 	fmt.Println(introspectResp.StatusCode)
+
+	fmt.Println("--- introspect response CODE", introspectResp.StatusCode)
 
 	// reject if satus code is not 200
 	if introspectResp.StatusCode != http.StatusOK {
@@ -369,8 +372,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println(string(rawToken))
-	fmt.Println(jwtPlugin.keys)
+	fmt.Println("--- introspect response", string(rawToken))
 
 	err, jwtPayload := jwtPlugin.CheckToken(string(rawToken));
 	if err != nil {
