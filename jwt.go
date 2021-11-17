@@ -29,20 +29,21 @@ import (
 
 // Config the plugin configuration.
 type Config struct {
-	OpaUrl        string
-	OpaAllowField string
-	PayloadFields []string
-	Required      bool
-	Keys          []string
-	Alg           string
-	Iss           string
-	Aud           string
-	OpaHeaders    map[string]string
-	JwtHeaders    map[string]string
+	OpaUrl         string
+	OpaAllowField  string
+	PayloadFields  []string
+	Required       bool
+	Keys           []string
+	UnprotectedMethods []string
+	Alg            string
+	Iss            string
+	Aud            string
+	OpaHeaders     map[string]string
+	JwtHeaders     map[string]string
 
-	IntrospectUrl string
-	ClientId      string
-	ClientSecret  string
+	IntrospectUrl  	   string
+	ClientId           string
+	ClientSecret       string
 	ForwardAuthHeader  string
 }
 
@@ -65,6 +66,7 @@ type JwtPlugin struct {
 	clientId           string
 	clientSecret       string
 	forwardAuthHeader  string
+	unprotectedMethods []string
 
 	keys               map[string]interface{}
 	alg                string
@@ -178,6 +180,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		iss:           config.Iss,
 		aud:           config.Aud,
 		keys:          make(map[string]interface{}),
+		unprotectedMethods: config.UnprotectedMethods,
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
 		introspectEndpoint: introspectUrl,
@@ -327,8 +330,19 @@ func (jwtPlugin *JwtPlugin) FetchKeys() {
 
 func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Request) {
 	fmt.Println("********* ServeHTTP")
+	// check to see if the incoming request uses an allowed method
+	for _, m := range jwtPlugin.unprotectedMethods {
+		if m == origReq.Method {
+			// just to avoid any confusion, delete auth headers
+			origReq.Header.Del("Authorization")
+			origReq.Header.Del(jwtPlugin.forwardAuthHeader)
+			// go to next service
+			jwtPlugin.next.ServeHTTP(rw, origReq)
+			return
+		}
+	}
+
 	client := &http.Client{}
-	// Forward to introspect URL
 
 	// take token from initial request
 	token := origReq.Header.Get("Authorization")
@@ -749,6 +763,7 @@ func JWKThumbprint(jwk string) (string, error) {
 func RespondError(rw http.ResponseWriter, msg string, statusCode int) {
 	resBody := fmt.Sprintf("{ \"errors\": [ { \"message\": \"%s\" } ] }", msg)
 	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	rw.Header().Set("X-Content-Type-Options", "nosniff")
 	rw.Header().Set("X-Content-Type-Options", "nosniff")
 	rw.WriteHeader(statusCode)
 	fmt.Fprintln(rw, resBody)
