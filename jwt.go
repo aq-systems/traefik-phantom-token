@@ -351,7 +351,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	introspectResp, err := client.Do(introspectReq)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		RespondError(rw, "Failed to introspect token", http.StatusInternalServerError)
 		return
 	}
 	defer introspectResp.Body.Close()
@@ -362,14 +362,14 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	// reject if satus code is not 200
 	if introspectResp.StatusCode != http.StatusOK {
 		fmt.Println(err)
-		http.Error(rw, "FORBIDDEN", http.StatusUnauthorized)
+		RespondError(rw, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	rawToken, err := io.ReadAll(introspectResp.Body)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		RespondError(rw, "Failed to read JWT", http.StatusInternalServerError)
 		return
 	}
 	fmt.Println("--- introspect response", string(rawToken))
@@ -377,13 +377,13 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	err, jwtPayload := jwtPlugin.CheckToken(string(rawToken));
 	if err != nil {
 		fmt.Println(err)
-		http.Error(rw, err.Error(), http.StatusForbidden)
+		RespondError(rw, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if jwtPlugin.opaUrl != "" {
 		if err := jwtPlugin.CheckOpa(origReq, jwtPayload); err != nil {
 			fmt.Println(err)
-			http.Error(rw, err.Error(), http.StatusForbidden)
+			RespondError(rw, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -395,7 +395,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	stringClaims, err := json.Marshal(jwtPayload.Payload)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		RespondError(rw, "Failed marshal claims", http.StatusInternalServerError)
 		return
 	}
 	str := base64.StdEncoding.EncodeToString(stringClaims)
@@ -744,4 +744,12 @@ func JWKThumbprint(jwk string) (string, error) {
 		bytesArr = append(bytesArr, bs[i])
 	}
 	return base64.RawURLEncoding.EncodeToString(bytesArr), nil
+}
+
+func RespondError(rw http.ResponseWriter, msg string, statusCode int) {
+	resBody := fmt.Sprintf("{ \"errors\": [ { \"message\": \"%s\" } ] }", msg)
+	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	rw.Header().Set("X-Content-Type-Options", "nosniff")
+	rw.WriteHeader(statusCode)
+	fmt.Fprintln(rw, resBody)
 }
