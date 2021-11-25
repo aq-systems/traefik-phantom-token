@@ -334,6 +334,13 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	token = strings.TrimSpace(token)
 	token = strings.Replace(token, "Bearer ", "", 1)
 
+	// remove auth headers
+	rw.Header().Del(jwtPlugin.forwardAuthHeader)
+	rw.Header().Set(jwtPlugin.forwardAuthHeader, "")
+	rw.Header().Del(jwtPlugin.forwardAuthErrorHeader)
+	rw.Header().Del("Authorization")
+	rw.Header().Del("authorization")
+
 	// Body x-www-from-urlencoded
 	data := url.Values{}
 	data.Set("token", token)
@@ -357,7 +364,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 
 	// reject if satus code is not 200
 	if introspectResp.StatusCode != http.StatusOK {
-		fmt.Println(err)
+		fmt.Println("Response !=", http.StatusOK)
 		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
 		return
 	}
@@ -392,8 +399,9 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	}
 	str := base64.StdEncoding.EncodeToString(stringClaims)
 
+	fmt.Println("****")
+
 	// remove Authorization header from original request
-	origReq.Header.Del("Authorization")
 	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
 	origReq.Header.Set(jwtPlugin.forwardAuthHeader, str)
 
@@ -580,11 +588,6 @@ func (jwtPlugin *JwtPlugin) CheckOpa(request *http.Request, token *JWT) error {
 }
 
 func (jwtPlugin *JwtPlugin) ForwardError(rw http.ResponseWriter, msg string, statusCode int, origReq *http.Request) {
-	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
-	rw.Header().Set("X-Content-Type-Options", "nosniff")
-	rw.Header().Set("X-Content-Type-Options", "nosniff")
-	rw.Header().Del(jwtPlugin.forwardAuthHeader)
-	rw.Header().Del("Authorization")
 	rw.Header().Set(jwtPlugin.forwardAuthErrorHeader, msg)
 	rw.WriteHeader(statusCode)
 	jwtPlugin.next.ServeHTTP(rw, origReq)
