@@ -334,12 +334,14 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	token = strings.TrimSpace(token)
 	token = strings.Replace(token, "Bearer ", "", 1)
 
-	// remove auth headers
+	// remove auth headers from forwarded request
 	rw.Header().Del(jwtPlugin.forwardAuthHeader)
-	rw.Header().Set(jwtPlugin.forwardAuthHeader, "")
 	rw.Header().Del(jwtPlugin.forwardAuthErrorHeader)
 	rw.Header().Del("Authorization")
-	rw.Header().Del("authorization")
+	origReq.Header.Del(jwtPlugin.forwardAuthHeader)
+	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
+	origReq.Header.Del("Authorization")
+
 
 	// Body x-www-from-urlencoded
 	data := url.Values{}
@@ -589,6 +591,7 @@ func (jwtPlugin *JwtPlugin) CheckOpa(request *http.Request, token *JWT) error {
 
 func (jwtPlugin *JwtPlugin) ForwardError(rw http.ResponseWriter, msg string, statusCode int, origReq *http.Request) {
 	rw.Header().Set(jwtPlugin.forwardAuthErrorHeader, msg)
+	origReq.Header.Set(jwtPlugin.forwardAuthErrorHeader, msg)
 	rw.WriteHeader(statusCode)
 	jwtPlugin.next.ServeHTTP(rw, origReq)
 }
