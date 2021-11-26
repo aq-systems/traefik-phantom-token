@@ -334,6 +334,13 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	token = strings.TrimSpace(token)
 	token = strings.Replace(token, "Bearer ", "", 1)
 
+	// if no auth header then forward to downstream with an error
+	// and ignore calling introspect url
+	if len(token) <= 0 {
+		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
+		return
+	}
+
 	// remove auth headers from forwarded request
 	rw.Header().Del(jwtPlugin.forwardAuthHeader)
 	rw.Header().Del(jwtPlugin.forwardAuthErrorHeader)
