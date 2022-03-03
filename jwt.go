@@ -46,6 +46,8 @@ type Config struct {
 	ForwardAuthHeader  string
 	ForwardAuthErrorHeader string
 	EnableMagicToken   bool
+	MagicToken         string
+	MagicTokenForwardAuth string
 }
 
 // CreateConfig creates a new OPA Config
@@ -68,6 +70,8 @@ type JwtPlugin struct {
 	forwardAuthHeader      string
 	forwardAuthErrorHeader string
 	enableMagicToken       bool
+	magicToken             string
+	magicTokenForwardAuth  string
 
 	keys               map[string]interface{}
 	alg                string
@@ -186,6 +190,8 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		clientSecret: config.ClientSecret,
 		clientId: config.ClientId,
 		enableMagicToken: config.EnableMagicToken,
+		magicToken: config.MagicToken,
+		magicTokenForwardAuth: config.MagicTokenForwardAuth,
 		forwardAuthHeader: config.ForwardAuthHeader,
 		forwardAuthErrorHeader: config.ForwardAuthErrorHeader,
 	}
@@ -345,13 +351,12 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	}
 
 	// if magic token mode is enable, which is for testing tools to bypass auth with a fake user
-	// then skip the auth check stage and forward on a mocked token for the aqs_testuser account
+	// then skip the auth check stage and forward on a mocked token
 	if jwtPlugin.enableMagicToken {
-		if token == "00000000-00000000-0000-0000-0000-000000000000" {
-			magicToken := "ewogICJqdGkiOiAiM2M1MTZmZTYtMTQ2Ni00ZDU2LTk1N2YtYThiMTMxNWVhZjQxIiwKICAiZGVsZWdhdGlvbklkIjogIjQwZjllNGFkLTRhNTctNDU0Mi05MzM4LTU4ZWM4ZjcwODA3ZiIsCiAgImV4cCI6IDE2MzczMTMyNTMsCiAgIm5iZiI6IDE2MzczMTIzNTMsCiAgInNjb3BlIjogIm9wZW5pZCIsCiAgImlzcyI6ICJodHRwOi8vY2IxYWQ1YzliOTk5Ojg0NDMvb2F1dGgvdjIvYW5vbnltb3VzIiwKICAic3ViIjogIjY0ZTk1YTU0YjU3NDI1MjJiNTY1M2FlMjMxYmQ5MDAxYzM3ODM2Zjg0MzY2ZDcyMDA1ODA3MDYyZDIzZGE1MzkiLAogICJhdWQiOiAiaHR0cHM6Ly9kZXYuYXEuc3lzdGVtcyIsCiAgImlhdCI6IDE2MzczMTIzNTMsCiAgInB1cnBvc2UiOiAiYWNjZXNzX3Rva2VuIiwKICAid29ya3NwYWNlIjogIm5vbmUiLAogICJlbWFpbF92ZXJpZmllZCI6IGZhbHNlLAogICJlbWFpbCI6ICJhcXNfdGVzdHVzZXJAYXEuc3lzdGVtcyIsCiAgInVzZXJuYW1lIjogImFxc190ZXN0dXNlciIKfQ=="
+		if token == jwtPlugin.magicToken {
 			// remove Authorization header from original request
 			origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
-			origReq.Header.Set(jwtPlugin.forwardAuthHeader, magicToken)
+			origReq.Header.Set(jwtPlugin.forwardAuthHeader, jwtPlugin.magicTokenForwardAuth)
 
 			jwtPlugin.next.ServeHTTP(rw, origReq)
 			return
