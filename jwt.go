@@ -186,6 +186,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		iss:           config.Iss,
 		aud:           config.Aud,
 		keys:          make(map[string]interface{}),
+		jwkEndpoints:  []*url.URL{},
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
 		openIdConfig:  &OpenIdConfig{},
@@ -249,7 +250,7 @@ func (jwtPlugin *JwtPlugin) ParseKeys(certificates []string) error {
 }
 
 func (jwtPlugin *JwtPlugin) FetchOpenIdConfig() {
-	fmt.Println("loading openid-config from the url:", jwtPlugin.openIdConfigUrl.String())
+	fmt.Println("traefik-phantom-token:", "loading openid-config from the url:", jwtPlugin.openIdConfigUrl.String())
 	client := &http.Client{}
 	introspectReq, err := http.NewRequest("GET", jwtPlugin.openIdConfigUrl.String(), nil)
 	openIdConfigResp, err := client.Do(introspectReq)
@@ -268,25 +269,25 @@ func (jwtPlugin *JwtPlugin) FetchOpenIdConfig() {
 		fmt.Println(err)
 	}
 	jwtPlugin.openIdConfig = &oc
-	fmt.Println("openid-config loaded")
+	fmt.Println("traefik-phantom-token:", "openid-config loaded")
 }
 
 func (jwtPlugin *JwtPlugin) FetchKeys() {
 	for _, u := range jwtPlugin.jwkEndpoints {
 		response, err := http.Get(u.String())
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("traefik-phantom-token:", err)
 			continue
 		}
 		body, err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("traefik-phantom-token:", err)
 			continue
 		}
 		var jwksKeys Keys
 		err = json.Unmarshal(body, &jwksKeys)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("traefik-phantom-token:", err)
 			continue
 		}
 		for _, key := range jwksKeys.Keys {
@@ -397,13 +398,13 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 	// Verify the token against the passed in JWKs
 	err, jwtPayload := jwtPlugin.CheckToken(token)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("traefik-phantom-token:", err)
 		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
 		return
 	}
 	if jwtPlugin.opaUrl != "" {
 		if err := jwtPlugin.CheckOpa(origReq, jwtPayload); err != nil {
-			fmt.Println(err)
+			fmt.Println("traefik-phantom-token:", err)
 			jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
 			return
 		}
@@ -423,23 +424,23 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 
 	userInfoResp, err := client.Do(introspectReq)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("traefik-phantom-token:", err)
 		jwtPlugin.ForwardError(rw, "gateway 500: failed to introspect token", http.StatusInternalServerError, origReq)
 		return
 	}
 	defer userInfoResp.Body.Close()
-	fmt.Println("traefik-phantom-opa:", introspectReq.URL, userInfoResp.StatusCode)
+	fmt.Println("traefik-phantom-token:", introspectReq.URL, userInfoResp.StatusCode)
 
 	// reject if status code is not 200
 	if userInfoResp.StatusCode != http.StatusOK {
-		fmt.Printf("Response (%d) != %d\n", userInfoResp.StatusCode, http.StatusOK)
+		fmt.Printf("traefik-phantom-token:", "Response (%d) != %d\n", userInfoResp.StatusCode, http.StatusOK)
 		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
 		return
 	}
 
 	userInfo, err := io.ReadAll(userInfoResp.Body)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("traefik-phantom-token:", err)
 		jwtPlugin.ForwardError(rw, "gateway 500: failed to read JWT", http.StatusInternalServerError, origReq)
 		return
 	}
@@ -478,7 +479,7 @@ func (jwtPlugin *JwtPlugin) CheckToken(rawAuthHeader string) (error, *JWT) {
 						Time:    time.Now(),
 						Sub:     sub,
 					})
-					fmt.Println(jsonLogEvent)
+					fmt.Println("traefik-phantom-token:", jsonLogEvent)
 				}
 			}
 		}
