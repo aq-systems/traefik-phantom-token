@@ -29,23 +29,28 @@ import (
 
 // Config the plugin configuration.
 type Config struct {
-	OpaUrl         string
-	OpaAllowField  string
-	PayloadFields  []string
-	Required       bool
-	Keys           []string
-	Alg            string
-	Iss            string
-	Aud            string
-	OpaHeaders     map[string]string
-	JwtHeaders     map[string]string
+	OpaUrl                   string
+	OpaAllowField            string
+	PayloadFields            []string
+	Required                 bool
+	AdditionalKeys           []string
+	Alg                      string
+	Iss                      string
+	Aud                      string
+	OpaHeaders               map[string]string
+	JwtHeaders               map[string]string
 
-	UserInfoUrl  	   string
-	ForwardAuthHeader  string
+	OpenIdConfigUrl  	   string
+	ForwardAuthHeader      string
 	ForwardAuthErrorHeader string
-	EnableMagicToken   bool
-	MagicToken         string
-	MagicTokenForwardAuth string
+	EnableMagicToken       bool
+	MagicToken             string
+	MagicTokenForwardAuth  string
+}
+
+type OpenIdConfig struct {
+	JwksUri     string `json:"jwks_uri"`
+	UserInfoUri string `json:"userinfo_endpoint"`
 }
 
 // CreateConfig creates a new OPA Config
@@ -62,13 +67,14 @@ type JwtPlugin struct {
 	required               bool
 
 	jwkEndpoints           []*url.URL
-	userInfoEndpoint       *url.URL
+	openIdConfigUrl       *url.URL
 	forwardAuthHeader      string
 	forwardAuthErrorHeader string
 	enableMagicToken       bool
 	magicToken             string
 	magicTokenForwardAuth  string
 
+	openIdConfig       *OpenIdConfig
 	keys               map[string]interface{}
 	alg                string
 	iss                string
@@ -166,7 +172,7 @@ type Response struct {
 
 // New creates a new plugin
 func New(_ context.Context, next http.Handler, config *Config, _ string) (http.Handler, error) {
-	introspectUrl, err := url.Parse(config.UserInfoUrl)
+	openIdConfigUrl, err := url.Parse(config.OpenIdConfigUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -182,14 +188,14 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		keys:          make(map[string]interface{}),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
-		userInfoEndpoint: introspectUrl,
+		openIdConfigUrl: openIdConfigUrl,
 		enableMagicToken: config.EnableMagicToken,
 		magicToken: config.MagicToken,
 		magicTokenForwardAuth: config.MagicTokenForwardAuth,
 		forwardAuthHeader: config.ForwardAuthHeader,
 		forwardAuthErrorHeader: config.ForwardAuthErrorHeader,
 	}
-	if err := jwtPlugin.ParseKeys(config.Keys); err != nil {
+	if err := jwtPlugin.ParseKeys(config.AdditionalKeys); err != nil {
 		return nil, err
 	}
 	go jwtPlugin.BackgroundRefresh()
@@ -198,6 +204,13 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 
 func (jwtPlugin *JwtPlugin) BackgroundRefresh() {
 	for {
+		jwtPlugin.FetchOpenIdConfig()
+		// add the jwks from the openId config to the list of keys
+		openIdJwks, err := url.ParseRequestURI(jwtPlugin.openIdConfig.JwksUri)
+		if err != nil {
+			fmt.Println(err)
+		}
+		jwtPlugin.jwkEndpoints = append(jwtPlugin.jwkEndpoints, openIdJwks);
 		jwtPlugin.FetchKeys()
 		time.Sleep(15 * time.Minute) // 15 min
 	}
@@ -234,22 +247,45 @@ func (jwtPlugin *JwtPlugin) ParseKeys(certificates []string) error {
 	return nil
 }
 
+func (jwtPlugin *JwtPlugin) FetchOpenIdConfig() {
+	fmt.Println("loading openid-config from the url:", jwtPlugin.openIdConfigUrl.String())
+	client := &http.Client{}
+	introspectReq, err := http.NewRequest("GET", jwtPlugin.openIdConfigUrl.String(), nil)
+	openIdConfigResp, err := client.Do(introspectReq)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	openIdRes, err := io.ReadAll(openIdConfigResp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	var t OpenIdConfig
+	err = json.Unmarshal(openIdRes, &t)
+	if err != nil {
+		fmt.Println(err)
+	}
+	jwtPlugin.openIdConfig = &t
+	fmt.Println("openid-config loaded")
+}
+
 func (jwtPlugin *JwtPlugin) FetchKeys() {
 	for _, u := range jwtPlugin.jwkEndpoints {
 		response, err := http.Get(u.String())
 		if err != nil {
-			// TODO: log warning
+			fmt.Println(err)
 			continue
 		}
 		body, err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			// TODO: log warning
+			fmt.Println(err)
 			continue
 		}
 		var jwksKeys Keys
 		err = json.Unmarshal(body, &jwksKeys)
 		if err != nil {
-			// TODO: log warning
+			fmt.Println(err)
 			continue
 		}
 		for _, key := range jwksKeys.Keys {
@@ -372,7 +408,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 		}
 	}
 
-	introspectReq, err := http.NewRequest("GET", jwtPlugin.userInfoEndpoint.String(), nil)
+	introspectReq, err := http.NewRequest("GET", jwtPlugin.openIdConfig.UserInfoUri, nil)
 	// headers
 	introspectReq.Header.Set("Authorization", origReq.Header.Get("Authorization"))
 
