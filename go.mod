@@ -1,3 +1,3 @@
-module github.com/JacobPlaster/traefik-phantom-opa
+module github.com/aq-systems/traefik-phantom-token
 
 go 1.17

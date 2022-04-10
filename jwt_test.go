@@ -1,4 +1,4 @@
-package traefik_phantom_opa_test
+package traefik_phantom_token_test
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	traefik_jwt_plugin "github.com/JacobPlaster/traefik-phantom-opa"
+	traefik_jwt_plugin "github.com/aq-systems/traefik-phantom-token"
 )
 
 func TestServeHTTPOK(t *testing.T) {
@@ -490,9 +490,6 @@ func TestIssue3(t *testing.T) {
 	}
 
 	cfg.ForwardAuthHeader = "X-Forward-User"
-	cfg.IntrospectUrl = "http://163.172.171.11:8443/oauth/v2/introspect"
-	cfg.ClientId = "Knox"
-	cfg.ClientSecret = "1234"
 
 	ctx := context.Background()
 	nextCalled := false

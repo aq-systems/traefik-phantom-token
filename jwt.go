@@ -1,4 +1,4 @@
-package traefik_phantom_opa
+package traefik_phantom_token
 
 import (
 	"bytes"
@@ -40,9 +40,7 @@ type Config struct {
 	OpaHeaders     map[string]string
 	JwtHeaders     map[string]string
 
-	IntrospectUrl  	   string
-	ClientId           string
-	ClientSecret       string
+	UserInfoUrl  	   string
 	ForwardAuthHeader  string
 	ForwardAuthErrorHeader string
 	EnableMagicToken   bool
@@ -64,9 +62,7 @@ type JwtPlugin struct {
 	required               bool
 
 	jwkEndpoints           []*url.URL
-	introspectEndpoint     *url.URL
-	clientId               string
-	clientSecret           string
+	userInfoEndpoint       *url.URL
 	forwardAuthHeader      string
 	forwardAuthErrorHeader string
 	enableMagicToken       bool
@@ -170,7 +166,7 @@ type Response struct {
 
 // New creates a new plugin
 func New(_ context.Context, next http.Handler, config *Config, _ string) (http.Handler, error) {
-	introspectUrl, err := url.Parse(config.IntrospectUrl)
+	introspectUrl, err := url.Parse(config.UserInfoUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -186,9 +182,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		keys:          make(map[string]interface{}),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
-		introspectEndpoint: introspectUrl,
-		clientSecret: config.ClientSecret,
-		clientId: config.ClientId,
+		userInfoEndpoint: introspectUrl,
 		enableMagicToken: config.EnableMagicToken,
 		magicToken: config.MagicToken,
 		magicTokenForwardAuth: config.MagicTokenForwardAuth,
@@ -363,51 +357,8 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 		}
 	}
 
-	// remove auth headers from forwarded request
-	rw.Header().Del(jwtPlugin.forwardAuthHeader)
-	rw.Header().Del(jwtPlugin.forwardAuthErrorHeader)
-	rw.Header().Del("Authorization")
-	origReq.Header.Del(jwtPlugin.forwardAuthHeader)
-	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
-	origReq.Header.Del("Authorization")
-
-
-	// Body x-www-from-urlencoded
-	data := url.Values{}
-	data.Set("token", token)
-	data.Set("client_id", jwtPlugin.clientId)
-	data.Set("client_secret", jwtPlugin.clientSecret)
-	data.Set("token_type_hint", "access_token")
-
-	introspectReq, err := http.NewRequest("POST", jwtPlugin.introspectEndpoint.String(), strings.NewReader(data.Encode()))
-	// headers
-	introspectReq.Header.Set("accept", "application/jwt")
-	introspectReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	introspectResp, err := client.Do(introspectReq)
-	if err != nil {
-		fmt.Println(err)
-		jwtPlugin.ForwardError(rw, "gateway 500: failed to introspect token", http.StatusInternalServerError, origReq)
-		return
-	}
-	defer introspectResp.Body.Close()
-	fmt.Println("traefik-phantom-opa:", introspectReq.URL, introspectResp.StatusCode)
-
-	// reject if satus code is not 200
-	if introspectResp.StatusCode != http.StatusOK {
-		fmt.Println("Response !=", http.StatusOK)
-		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
-		return
-	}
-
-	rawToken, err := io.ReadAll(introspectResp.Body)
-	if err != nil {
-		fmt.Println(err)
-		jwtPlugin.ForwardError(rw, "gateway 500: failed to read JWT", http.StatusInternalServerError, origReq)
-		return
-	}
-
-	err, jwtPayload := jwtPlugin.CheckToken(string(rawToken));
+	// Verify the token against the passed in JWKs
+	err, jwtPayload := jwtPlugin.CheckToken(token)
 	if err != nil {
 		fmt.Println(err)
 		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
@@ -421,14 +372,43 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 		}
 	}
 
-	// add X-Forward-Auth: b64({JSON}) header
-	stringClaims, err := json.Marshal(jwtPayload.Payload)
+	introspectReq, err := http.NewRequest("GET", jwtPlugin.userInfoEndpoint.String(), nil)
+	// headers
+	introspectReq.Header.Set("Authorization", origReq.Header.Get("Authorization"))
+
+	// remove auth headers from forwarded request
+	rw.Header().Del(jwtPlugin.forwardAuthHeader)
+	rw.Header().Del(jwtPlugin.forwardAuthErrorHeader)
+	rw.Header().Del("Authorization")
+	origReq.Header.Del(jwtPlugin.forwardAuthHeader)
+	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
+	origReq.Header.Del("Authorization")
+
+	userInfoResp, err := client.Do(introspectReq)
 	if err != nil {
 		fmt.Println(err)
-		jwtPlugin.ForwardError(rw, "gateway 500: failed to marshal claims", http.StatusInternalServerError, origReq)
+		jwtPlugin.ForwardError(rw, "gateway 500: failed to introspect token", http.StatusInternalServerError, origReq)
 		return
 	}
-	str := base64.StdEncoding.EncodeToString(stringClaims)
+	defer userInfoResp.Body.Close()
+	fmt.Println("traefik-phantom-opa:", introspectReq.URL, userInfoResp.StatusCode)
+
+	// reject if status code is not 200
+	if userInfoResp.StatusCode != http.StatusOK {
+		fmt.Printf("Response (%d) != %d\n", userInfoResp.StatusCode, http.StatusOK)
+		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
+		return
+	}
+
+	userInfo, err := io.ReadAll(userInfoResp.Body)
+	if err != nil {
+		fmt.Println(err)
+		jwtPlugin.ForwardError(rw, "gateway 500: failed to read JWT", http.StatusInternalServerError, origReq)
+		return
+	}
+
+	// add X-Forward-Auth: b64({JSON}) header
+	str := base64.StdEncoding.EncodeToString(userInfo)
 
 	// remove Authorization header from original request
 	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
