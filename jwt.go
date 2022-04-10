@@ -186,7 +186,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		iss:           config.Iss,
 		aud:           config.Aud,
 		keys:          make(map[string]interface{}),
-		jwkEndpoints:  []*url.URL{},
+		jwkEndpoints:  make([]*url.URL, 0),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
 		openIdConfig:  &OpenIdConfig{},
@@ -207,12 +207,15 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 func (jwtPlugin *JwtPlugin) BackgroundRefresh() {
 	for {
 		jwtPlugin.FetchOpenIdConfig()
+		fmt.Println("traefik-phantom-token:", jwtPlugin.openIdConfig)
 		// add the jwks from the openId config to the list of keys
-		openIdJwks, err := url.ParseRequestURI(jwtPlugin.openIdConfig.JwksUri)
-		if err != nil {
-			fmt.Println(err)
+		if openIdJwks, err := url.ParseRequestURI(jwtPlugin.openIdConfig.JwksUri); err != nil {
+			if openIdJwks.String() != "" {
+				jwtPlugin.jwkEndpoints = append(jwtPlugin.jwkEndpoints, openIdJwks)
+			}
+		} else {
+			fmt.Println("traefik-phantom-token:", err)
 		}
-		jwtPlugin.jwkEndpoints = append(jwtPlugin.jwkEndpoints, openIdJwks)
 		jwtPlugin.FetchKeys()
 		time.Sleep(15 * time.Minute) // 15 min
 	}
@@ -273,6 +276,7 @@ func (jwtPlugin *JwtPlugin) FetchOpenIdConfig() {
 }
 
 func (jwtPlugin *JwtPlugin) FetchKeys() {
+	fmt.Println("-------", jwtPlugin.jwkEndpoints)
 	for _, u := range jwtPlugin.jwkEndpoints {
 		response, err := http.Get(u.String())
 		if err != nil {
@@ -433,7 +437,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 
 	// reject if status code is not 200
 	if userInfoResp.StatusCode != http.StatusOK {
-		fmt.Printf("traefik-phantom-token:", "Response (%d) != %d\n", userInfoResp.StatusCode, http.StatusOK)
+		fmt.Printf("traefik-phantom-token: Response (%d) != %d\n", userInfoResp.StatusCode, http.StatusOK)
 		jwtPlugin.ForwardError(rw, "Unauthorized", http.StatusUnauthorized, origReq)
 		return
 	}
