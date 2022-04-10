@@ -67,7 +67,7 @@ type JwtPlugin struct {
 	required               bool
 
 	jwkEndpoints           []*url.URL
-	openIdConfigUrl       *url.URL
+	openIdConfigUrl        *url.URL
 	forwardAuthHeader      string
 	forwardAuthErrorHeader string
 	enableMagicToken       bool
@@ -188,6 +188,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		keys:          make(map[string]interface{}),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
+		openIdConfig:  &OpenIdConfig{},
 		openIdConfigUrl: openIdConfigUrl,
 		enableMagicToken: config.EnableMagicToken,
 		magicToken: config.MagicToken,
@@ -210,7 +211,7 @@ func (jwtPlugin *JwtPlugin) BackgroundRefresh() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		jwtPlugin.jwkEndpoints = append(jwtPlugin.jwkEndpoints, openIdJwks);
+		jwtPlugin.jwkEndpoints = append(jwtPlugin.jwkEndpoints, openIdJwks)
 		jwtPlugin.FetchKeys()
 		time.Sleep(15 * time.Minute) // 15 min
 	}
@@ -261,12 +262,12 @@ func (jwtPlugin *JwtPlugin) FetchOpenIdConfig() {
 		fmt.Println(err)
 		return
 	}
-	var t OpenIdConfig
-	err = json.Unmarshal(openIdRes, &t)
+	var oc OpenIdConfig
+	err = json.Unmarshal(openIdRes, &oc)
 	if err != nil {
 		fmt.Println(err)
 	}
-	jwtPlugin.openIdConfig = &t
+	jwtPlugin.openIdConfig = &oc
 	fmt.Println("openid-config loaded")
 }
 
