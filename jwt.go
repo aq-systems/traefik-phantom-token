@@ -451,6 +451,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 
 	// add X-Forward-Auth: b64({JSON}) header
 	str := base64.StdEncoding.EncodeToString(userInfo)
+	fmt.Println("traefik-phantom-token: base64 ", str)
 
 	// remove Authorization header from original request
 	origReq.Header.Del(jwtPlugin.forwardAuthErrorHeader)
