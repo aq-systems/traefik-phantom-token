@@ -416,7 +416,7 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, origReq *http.Requ
 
 	introspectReq, err := http.NewRequest("GET", jwtPlugin.openIdConfig.UserInfoUri, nil)
 	// headers
-	introspectReq.Header.Set("Authorization", origReq.Header.Get("Authorization"))
+	introspectReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
 	// remove auth headers from forwarded request
 	rw.Header().Del(jwtPlugin.forwardAuthHeader)
